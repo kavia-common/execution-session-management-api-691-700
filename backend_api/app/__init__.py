@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, render_template
 from flask_cors import CORS
 from flask_smorest import Api
 
@@ -10,7 +10,7 @@ from app.routes.stats import blp as stats_blp
 from app.routes.logs import blp as logs_blp
 
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", template_folder="templates")
 app.url_map.strict_slashes = False
 
 # Enable CORS for all origins (adjust if needed)
@@ -36,3 +36,9 @@ api.register_blueprint(run_blp)
 api.register_blueprint(progress_blp)
 api.register_blueprint(stats_blp)
 api.register_blueprint(logs_blp)
+
+# PUBLIC_INTERFACE
+@app.get("/")
+def index():
+    """Render the minimal frontend UI for selecting tests and monitoring execution."""
+    return render_template("index.html")

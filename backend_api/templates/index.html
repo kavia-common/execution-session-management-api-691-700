@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Execution Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <h1>Execution Dashboard</h1>
+      <p class="subtitle">Run Robot tests and monitor progress</p>
+    </div>
+    <div class="header-right">
+      <div class="progress-wrapper" aria-label="Progress">
+        <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+      </div>
+      <div class="progress-meta">
+        <span id="progress-percent">0%</span>
+        <span class="dot">•</span>
+        <span id="elapsed-time">Elapsed: 00:00</span>
+        <span class="dot">•</span>
+        <span id="status-badge" class="badge badge-neutral">IDLE</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="left-panel card">
+      <div class="panel-section">
+        <h2>Summary</h2>
+        <div class="stats-grid">
+          <div class="stat stat-pass">
+            <div class="label">PASS</div>
+            <div id="stat-pass" class="value">0</div>
+          </div>
+          <div class="stat stat-fail">
+            <div class="label">FAIL</div>
+            <div id="stat-fail" class="value">0</div>
+          </div>
+          <div class="stat stat-skip">
+            <div class="label">SKIP</div>
+            <div id="stat-skip" class="value">0</div>
+          </div>
+          <div class="stat stat-notrun">
+            <div class="label">NOT RUN</div>
+            <div id="stat-notrun" class="value">0</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Test Cases</h2>
+        <ul id="test-list" class="checklist">
+          <!-- Placeholder items; can be mapped to real tests later -->
+          <li><label><input type="checkbox" value="Smoke Test 1" checked> Smoke Test 1</label></li>
+          <li><label><input type="checkbox" value="Smoke Test 2"> Smoke Test 2</label></li>
+          <li><label><input type="checkbox" value="Regression A"> Regression A</label></li>
+          <li><label><input type="checkbox" value="Regression B"> Regression B</label></li>
+        </ul>
+      </div>
+
+      <div class="panel-section controls">
+        <button id="btn-start" class="btn btn-primary">Start</button>
+        <button id="btn-stop" class="btn btn-secondary">Stop</button>
+      </div>
+    </section>
+
+    <section class="right-panel card">
+      <div class="panel-section header-row">
+        <h2>Live Logs</h2>
+        <div class="log-controls">
+          <label for="log-limit">Tail:</label>
+          <select id="log-limit">
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="300">300</option>
+            <option value="500">500</option>
+          </select>
+        </div>
+      </div>
+      <pre id="log-output" class="log-output" aria-live="polite"></pre>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div>API Docs: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></div>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
