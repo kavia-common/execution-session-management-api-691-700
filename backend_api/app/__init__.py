@@ -1,19 +1,38 @@
 from flask import Flask
 from flask_cors import CORS
-from .routes.health import blp
 from flask_smorest import Api
+
+from app.error_handlers import register_error_handlers
+from app.routes.health import blp as health_blp
+from app.routes.run import blp as run_blp
+from app.routes.progress import blp as progress_blp
+from app.routes.stats import blp as stats_blp
+from app.routes.logs import blp as logs_blp
 
 
 app = Flask(__name__)
 app.url_map.strict_slashes = False
+
+# Enable CORS for all origins (adjust if needed)
 CORS(app, resources={r"/*": {"origins": "*"}})
-app.config["API_TITLE"] = "My Flask API"
+
+# OpenAPI / Swagger configuration
+app.config["API_TITLE"] = "Execution Session Management API"
 app.config["API_VERSION"] = "v1"
 app.config["OPENAPI_VERSION"] = "3.0.3"
-app.config['OPENAPI_URL_PREFIX'] = '/docs'
+app.config["OPENAPI_URL_PREFIX"] = "/docs"
 app.config["OPENAPI_SWAGGER_UI_PATH"] = ""
 app.config["OPENAPI_SWAGGER_UI_URL"] = "https://cdn.jsdelivr.net/npm/swagger-ui-dist/"
 
-
+# Initialize smorest Api
 api = Api(app)
-api.register_blueprint(blp)
+
+# Register error handlers
+register_error_handlers(app)
+
+# Register blueprints
+api.register_blueprint(health_blp)
+api.register_blueprint(run_blp)
+api.register_blueprint(progress_blp)
+api.register_blueprint(stats_blp)
+api.register_blueprint(logs_blp)
