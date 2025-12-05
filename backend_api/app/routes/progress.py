@@ -32,8 +32,4 @@ class ProgressAPI(MethodView):
         progress = session_service.get_progress(session_id)
         if not progress:
             blp.abort(404, message="Session not found")
-        return {
-            "total_steps": progress.total_steps,
-            "current_step": progress.current_step,
-            "percent": progress.percent,
-        }
+        return progress

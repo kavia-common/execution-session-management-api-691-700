@@ -13,8 +13,14 @@ class ErrorSchema(Schema):
 
 class RunRequestSchema(Schema):
     """Request payload for starting a run."""
-    suite = fields.Str(required=False, load_default="default", description="Name of the suite to run")
-    parameters = fields.Dict(keys=fields.Str(), values=fields.Raw(), required=False, load_default=dict, description="Optional parameters")
+    # Backward compatible 'suite' but we also support Robot-specific params
+    suite = fields.Str(required=False, load_default="default", description="Project/suite name used for grouping outputs")
+    # Robot integration fields:
+    test_name = fields.Str(required=False, allow_none=True, description="Optional suite/file path relative to tests_root")
+    test_cases = fields.List(fields.Str(), required=False, load_default=list, description="Optional list of Robot test case names to run")
+    tests_root = fields.Str(required=False, load_default=".", description="Directory or file path where robot tests reside")
+    config_folder = fields.Str(required=False, allow_none=True, description="Folder containing Robot_Setting.yaml to be loaded as variables")
+    parameters = fields.Dict(keys=fields.Str(), values=fields.Raw(), required=False, load_default=dict, description="Optional parameters (reserved)")
 
 
 class RunResponseSchema(Schema):
@@ -48,6 +54,13 @@ class StatsSchema(Schema):
     steps_completed = fields.Int(required=True, description="Number of steps completed")
     success = fields.Bool(required=True, description="Whether the session completed successfully")
     artifacts = fields.Dict(keys=fields.Str(), values=fields.Str(), required=True, description="Artifact map such as URLs")
+    # Additional Robot totals for convenience
+    passed = fields.Int(required=False, description="Number of tests passed")
+    failed = fields.Int(required=False, description="Number of tests failed")
+    skipped = fields.Int(required=False, description="Number of tests skipped")
+    started_at = fields.Float(required=False, description="Start time (epoch seconds)")
+    finished_at = fields.Float(required=False, description="Finish time (epoch seconds)")
+    status = fields.Str(required=False, description="Final status")
 
 
 class LogsQuerySchema(Schema):

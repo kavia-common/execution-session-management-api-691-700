@@ -32,9 +32,4 @@ class StatsAPI(MethodView):
         stats = session_service.get_stats(session_id)
         if not stats:
             blp.abort(404, message="Stats not available yet or session not found")
-        return {
-            "duration_seconds": stats.duration_seconds,
-            "steps_completed": stats.steps_completed,
-            "success": stats.success,
-            "artifacts": stats.artifacts,
-        }
+        return stats

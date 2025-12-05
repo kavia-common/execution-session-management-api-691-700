@@ -34,11 +34,4 @@ class LogsAPI(MethodView):
         logs = session_service.get_logs(session_id, level=level, limit=limit)
         if logs is None:
             blp.abort(404, message="Session not found")
-        return [
-            {
-                "timestamp": log.timestamp,
-                "level": log.level,
-                "message": log.message,
-            }
-            for log in logs
-        ]
+        return logs

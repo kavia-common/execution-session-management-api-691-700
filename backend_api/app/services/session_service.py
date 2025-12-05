@@ -1,138 +1,77 @@
 from __future__ import annotations
 
-import threading
-import time
-import uuid
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, Optional, List
+
+from app.state_manager import StateManager
+from app.robot_runner import RobotRunner
 
 
-@dataclass
-class SessionLog:
-    """Represents a single log entry in a session."""
-    timestamp: float
-    level: str
-    message: str
-
-
-@dataclass
-class SessionProgress:
-    """Represents progress details for a session."""
-    total_steps: int
-    current_step: int
-    percent: float
-
-
-@dataclass
-class SessionStats:
-    """Represents aggregated statistics for a session."""
-    duration_seconds: float
-    steps_completed: int
-    success: bool
-    artifacts: Dict[str, str] = field(default_factory=dict)
-
-
-@dataclass
-class Session:
-    """Represents an execution session."""
-    session_id: str
-    status: str
-    created_at: float
-    updated_at: float
-    logs: List[SessionLog] = field(default_factory=list)
-    progress: SessionProgress = field(default_factory=lambda: SessionProgress(total_steps=10, current_step=0, percent=0.0))
-    stats: Optional[SessionStats] = None
-
-
-class InMemorySessionService:
+class SessionService:
     """
     PUBLIC_INTERFACE
-    A thread-safe in-memory session service to simulate execution sessions, progress, statistics, and logs.
+    High-level service bridging Flask routes with StateManager and RobotRunner.
+    Creates sessions, starts Robot runs, and exposes read views for progress, stats, and logs.
     """
+
     def __init__(self) -> None:
-        self._sessions: Dict[str, Session] = {}
-        self._lock = threading.RLock()
+        self.state = StateManager()
+        self.runner = RobotRunner(self.state)
 
     # PUBLIC_INTERFACE
-    def create_session(self, payload: Dict) -> Session:
-        """Create a new mock session and start a background thread to simulate progress/logs."""
-        with self._lock:
-            session_id = str(uuid.uuid4())
-            now = time.time()
-            session = Session(
-                session_id=session_id,
-                status="RUNNING",
-                created_at=now,
-                updated_at=now,
-            )
-            session.logs.append(SessionLog(timestamp=now, level="INFO", message="Session created"))
-            session.logs.append(SessionLog(timestamp=now, level="INFO", message=f"Received payload: {payload}"))
-            self._sessions[session_id] = session
+    def create_session(self, payload: Dict):
+        """
+        Create a session and start Robot execution asynchronously.
+        Payload supports:
+          - suite (project name, used for output grouping)
+          - tests_root (path to robot tests)
+          - test_name (optional suite/file within tests_root)
+          - test_cases (optional list of test case names)
+          - config_folder (optional path containing Robot_Setting.yaml)
+        """
+        suite = payload.get("suite") or "default"
+        tests_root = payload.get("tests_root") or "."
+        test_name = payload.get("test_name")
+        test_cases = payload.get("test_cases") or []
+        config_folder = payload.get("config_folder")
 
-            # Start simulation in background
-            t = threading.Thread(target=self._simulate_run, args=(session_id,), daemon=True)
-            t.start()
-            return session
+        # Create a session
+        s = self.state.create_session()
+        # Persist initial payload in logs
+        self.state.append_log(s.session_id, "INFO", f"Received payload: {payload}")
+
+        # Start robot in background
+        self.runner.start(
+            s.session_id,
+            project=suite,
+            tests_root=tests_root,
+            test_name=test_name,
+            test_cases=test_cases,
+            config_folder=config_folder,
+        )
+        # Return a lightweight view (mimic previous response fields)
+        sess = self.state.get(s.session_id)
+        return type("SessionView", (), {
+            "session_id": s.session_id,
+            "status": sess.status if sess else "PENDING",
+            "created_at": sess.created_at if sess else 0.0,
+            "updated_at": sess.updated_at if sess else 0.0,
+        })
 
     # PUBLIC_INTERFACE
-    def get_session(self, session_id: str) -> Optional[Session]:
-        """Get a session by ID."""
-        with self._lock:
-            return self._sessions.get(session_id)
+    def get_progress(self, session_id: str) -> Optional[Dict]:
+        """Get progress view for a session."""
+        return self.state.get_progress_view(session_id)
 
     # PUBLIC_INTERFACE
-    def get_progress(self, session_id: str) -> Optional[SessionProgress]:
-        """Get progress for a session."""
-        s = self.get_session(session_id)
-        return s.progress if s else None
+    def get_stats(self, session_id: str) -> Optional[Dict]:
+        """Get stats view for a session."""
+        return self.state.get_stats_view(session_id)
 
     # PUBLIC_INTERFACE
-    def get_stats(self, session_id: str) -> Optional[SessionStats]:
-        """Get statistics for a session."""
-        s = self.get_session(session_id)
-        return s.stats if s else None
+    def get_logs(self, session_id: str, level: Optional[str] = None, limit: Optional[int] = None) -> Optional[List[Dict]]:
+        """Get logs view for a session."""
+        return self.state.get_logs_view(session_id, level=level, limit=limit)
 
-    # PUBLIC_INTERFACE
-    def get_logs(self, session_id: str, level: Optional[str] = None, limit: Optional[int] = None) -> Optional[List[SessionLog]]:
-        """Get logs for a session with optional level filter and limit."""
-        s = self.get_session(session_id)
-        if not s:
-            return None
-        logs = s.logs
-        if level:
-            logs = [l for l in logs if l.level.upper() == level.upper()]
-        if limit is not None and limit >= 0:
-            logs = logs[-limit:]
-        return logs
 
-    def _simulate_run(self, session_id: str) -> None:
-        """Simulate a running session producing progress, logs and final stats."""
-        steps = 10
-        for i in range(1, steps + 1):
-            time.sleep(0.2)
-            with self._lock:
-                s = self._sessions.get(session_id)
-                if not s:
-                    return
-                s.progress.current_step = i
-                s.progress.total_steps = steps
-                s.progress.percent = round((i / steps) * 100.0, 2)
-                s.updated_at = time.time()
-                s.logs.append(SessionLog(timestamp=s.updated_at, level="INFO", message=f"Completed step {i}/{steps}"))
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if not s:
-                return
-            s.status = "COMPLETED"
-            duration = s.updated_at - s.created_at if s.updated_at and s.created_at else steps * 0.2
-            s.stats = SessionStats(
-                duration_seconds=round(duration, 3),
-                steps_completed=steps,
-                success=True,
-                artifacts={"report_url": f"/artifacts/{session_id}/report.html"}
-            )
-            s.updated_at = time.time()
-            s.logs.append(SessionLog(timestamp=s.updated_at, level="INFO", message="Session completed"))
-
-# Singleton service instance
-session_service = InMemorySessionService()
+# Singleton instance
+session_service = SessionService()
