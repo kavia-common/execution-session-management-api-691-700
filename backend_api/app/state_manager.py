@@ -9,6 +9,14 @@ from typing import Dict, List, Optional
 
 MAX_LOG_LINES = 1000
 
+# Case status constants
+CASE_NOTRUN = "NOTRUN"
+CASE_SCHEDULE = "SCHEDULE"
+CASE_TESTING = "TESTING"
+CASE_PASS = "PASS"
+CASE_FAIL = "FAIL"
+CASE_SKIP = "SKIP"
+
 
 @dataclass
 class LogLine:
@@ -50,13 +58,21 @@ class SessionState:
     progress: Progress = field(default_factory=Progress)
     stats: Stats = field(default_factory=Stats)
     logs: List[LogLine] = field(default_factory=list)
+    # New fields for Phase 4
+    ui_lock: bool = False
+    # map case name -> status
+    case_status: Dict[str, str] = field(default_factory=dict)
+    # current test info
+    current_case_name: Optional[str] = None
+    current_case_doc: Optional[str] = None
 
 
 class StateManager:
     """
     PUBLIC_INTERFACE
     Thread-safe in-memory state manager for execution sessions.
-    Stores per-session: status, timestamps, progress, stats, logs (bounded), and artifacts.
+    Stores per-session: status, timestamps, progress, stats, logs (bounded), artifacts,
+    per-case statuses, current test info, and UI lock state.
     """
 
     def __init__(self) -> None:
@@ -125,6 +141,31 @@ class StateManager:
             s.updated_at = time.time()
 
     # PUBLIC_INTERFACE
+    def initialize_cases(self, session_id: str, cases: List[str]) -> None:
+        """Initialize per-case statuses to SCHEDULE for selected cases."""
+        with self._lock:
+            s = self._sessions.get(session_id)
+            if not s:
+                return
+            s.case_status = {}
+            for c in cases or []:
+                if c:
+                    s.case_status[c] = CASE_SCHEDULE
+            s.updated_at = time.time()
+            if cases:
+                self.append_log(session_id, "INFO", f"Initialized {len(cases)} test cases as SCHEDULE.")
+
+    # PUBLIC_INTERFACE
+    def set_ui_lock(self, session_id: str, locked: bool) -> None:
+        """Set UI lock flag for session."""
+        with self._lock:
+            s = self._sessions.get(session_id)
+            if not s:
+                return
+            s.ui_lock = bool(locked)
+            s.updated_at = time.time()
+
+    # PUBLIC_INTERFACE
     def mark_started(self, session_id: str) -> None:
         """Mark a session as started."""
         with self._lock:
@@ -154,8 +195,82 @@ class StateManager:
             s.stats.passed = int(totals.get("passed", 0))
             s.stats.failed = int(totals.get("failed", 0))
             s.stats.skipped = int(totals.get("skipped", 0))
+            # Unlock UI on completion
+            s.ui_lock = False
             self.append_log(session_id, "INFO", f"Execution finished. Success={success} "
                                                 f"(Passed={s.stats.passed}, Failed={s.stats.failed}, Skipped={s.stats.skipped}).")
+
+    # Case tracking helpers
+
+    # PUBLIC_INTERFACE
+    def set_current_case(self, session_id: str, name: Optional[str], documentation: Optional[str] = None) -> None:
+        """Set current running case and mark it TESTING. Prior TESTING moves back to SCHEDULE if different."""
+        with self._lock:
+            s = self._sessions.get(session_id)
+            if not s:
+                return
+            # Move any previously testing case back to schedule if it's different and still unknown result
+            if s.current_case_name and s.current_case_name != name:
+                prev = s.current_case_name
+                if prev in s.case_status and s.case_status[prev] == CASE_TESTING:
+                    s.case_status[prev] = CASE_SCHEDULE
+            s.current_case_name = name
+            s.current_case_doc = documentation
+            if name:
+                # ensure exists in map
+                if name not in s.case_status:
+                    s.case_status[name] = CASE_SCHEDULE
+                s.case_status[name] = CASE_TESTING
+            s.updated_at = time.time()
+
+    # PUBLIC_INTERFACE
+    def set_case_result(self, session_id: str, name: str, outcome: str) -> None:
+        """Set final status for a case to PASS/FAIL/SKIP."""
+        if outcome not in {CASE_PASS, CASE_FAIL, CASE_SKIP}:
+            return
+        with self._lock:
+            s = self._sessions.get(session_id)
+            if not s:
+                return
+            if name not in s.case_status:
+                s.case_status[name] = CASE_NOTRUN
+            s.case_status[name] = outcome
+            # if the current running is same, clear current
+            if s.current_case_name == name:
+                s.current_case_name = None
+                s.current_case_doc = None
+            s.updated_at = time.time()
+
+    # Views for new endpoints
+
+    # PUBLIC_INTERFACE
+    def get_case_status_view(self, session_id: str) -> Optional[Dict]:
+        """Return per-case statuses for a session."""
+        s = self.get(session_id)
+        if not s:
+            return None
+        cases = [{"name": k, "status": v} for k, v in s.case_status.items()]
+        return {"session_id": s.session_id, "cases": cases}
+
+    # PUBLIC_INTERFACE
+    def get_current_case_info_view(self, session_id: str) -> Optional[Dict]:
+        """Return current test case info for a session."""
+        s = self.get(session_id)
+        if not s:
+            return None
+        return {
+            "session_id": s.session_id,
+            "name": s.current_case_name,
+            "documentation": s.current_case_doc,
+        }
+
+    # PUBLIC_INTERFACE
+    def get_ui_lock_view(self, session_id: str) -> Optional[Dict]:
+        """Return the UI lock state."""
+        s = self.get(session_id)
+        if not s:
+            return None
+        return {"session_id": s.session_id, "locked": bool(s.ui_lock)}
 
     # PUBLIC_INTERFACE
     def get_progress_view(self, session_id: str) -> Optional[Dict]:
@@ -175,7 +290,6 @@ class StateManager:
         s = self.get(session_id)
         if not s:
             return None
-        # Include Robot-specific totals as requested
         return {
             "duration_seconds": s.stats.duration_seconds,
             "steps_completed": s.progress.current_step,

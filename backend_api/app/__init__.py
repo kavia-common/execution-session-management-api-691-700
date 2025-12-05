@@ -8,6 +8,9 @@ from app.routes.run import blp as run_blp
 from app.routes.progress import blp as progress_blp
 from app.routes.stats import blp as stats_blp
 from app.routes.logs import blp as logs_blp
+from app.routes.case_status import blp as case_status_blp
+from app.routes.current_case_info import blp as current_case_info_blp
+from app.routes.ui_lock import blp as ui_lock_blp
 
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -36,6 +39,9 @@ api.register_blueprint(run_blp)
 api.register_blueprint(progress_blp)
 api.register_blueprint(stats_blp)
 api.register_blueprint(logs_blp)
+api.register_blueprint(case_status_blp)
+api.register_blueprint(current_case_info_blp)
+api.register_blueprint(ui_lock_blp)
 
 # PUBLIC_INTERFACE
 @app.get("/")

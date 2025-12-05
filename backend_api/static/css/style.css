@@ -228,6 +228,7 @@ html, body {
   background: #fff;
   color: var(--muted);
 }
+.checklist li .badge { min-width: 84px; text-align: center; }
 
 .badge-neutral { background: #F3F4F6; color: #374151; }
 .badge-info { background: #DBEAFE; color: #1E40AF; border-color: #BFDBFE; }

@@ -10,7 +10,7 @@ class SessionService:
     """
     PUBLIC_INTERFACE
     High-level service bridging Flask routes with StateManager and RobotRunner.
-    Creates sessions, starts Robot runs, and exposes read views for progress, stats, and logs.
+    Creates sessions, starts Robot runs, and exposes read views for progress, stats, logs, and new state endpoints.
     """
 
     def __init__(self) -> None:
@@ -36,6 +36,11 @@ class SessionService:
 
         # Create a session
         s = self.state.create_session()
+        # Initialize case statuses for selected cases as SCHEDULE
+        if test_cases:
+            self.state.initialize_cases(s.session_id, test_cases)
+        # Lock UI early for safety
+        self.state.set_ui_lock(s.session_id, True)
         # Persist initial payload in logs
         self.state.append_log(s.session_id, "INFO", f"Received payload: {payload}")
 
@@ -71,6 +76,21 @@ class SessionService:
     def get_logs(self, session_id: str, level: Optional[str] = None, limit: Optional[int] = None) -> Optional[List[Dict]]:
         """Get logs view for a session."""
         return self.state.get_logs_view(session_id, level=level, limit=limit)
+
+    # PUBLIC_INTERFACE
+    def get_case_status(self, session_id: str) -> Optional[Dict]:
+        """Get per-case status view."""
+        return self.state.get_case_status_view(session_id)
+
+    # PUBLIC_INTERFACE
+    def get_current_case_info(self, session_id: str) -> Optional[Dict]:
+        """Get current case info view."""
+        return self.state.get_current_case_info_view(session_id)
+
+    # PUBLIC_INTERFACE
+    def get_ui_lock(self, session_id: str) -> Optional[Dict]:
+        """Get UI lock view."""
+        return self.state.get_ui_lock_view(session_id)
 
 
 # Singleton instance

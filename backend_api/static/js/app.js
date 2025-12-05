@@ -33,6 +33,55 @@
   const logOutput = document.getElementById("log-output");
   const logLimitSel = document.getElementById("log-limit");
 
+  // Newly added UI elements (render targets)
+  let caseStatusContainer = null;
+  let currentCaseNameEl = null;
+  let currentCaseDocEl = null;
+
+  function ensureDynamicSections() {
+    // Create a section for current case info if not present
+    if (!currentCaseNameEl || !currentCaseDocEl) {
+      const rightPanel = document.querySelector(".right-panel.card");
+      if (rightPanel) {
+        const sec = document.createElement("div");
+        sec.className = "panel-section";
+        const h2 = document.createElement("h2");
+        h2.textContent = "Current Test";
+        const nameP = document.createElement("div");
+        nameP.id = "current-case-name";
+        nameP.className = "badge badge-info";
+        const docP = document.createElement("div");
+        docP.id = "current-case-doc";
+        docP.style.marginTop = "8px";
+        docP.className = "badge badge-neutral";
+        sec.appendChild(h2);
+        sec.appendChild(nameP);
+        sec.appendChild(docP);
+        rightPanel.insertBefore(sec, rightPanel.firstChild);
+        currentCaseNameEl = nameP;
+        currentCaseDocEl = docP;
+      }
+    }
+    // Create a section in left panel for case statuses if not present
+    if (!caseStatusContainer) {
+      const leftPanel = document.querySelector(".left-panel.card");
+      if (leftPanel) {
+        const sec = document.createElement("div");
+        sec.className = "panel-section";
+        const h2 = document.createElement("h2");
+        h2.textContent = "Case Status";
+        const list = document.createElement("ul");
+        list.id = "case-status-list";
+        list.className = "checklist";
+        sec.appendChild(h2);
+        sec.appendChild(list);
+        // Insert after summary section (second child)
+        leftPanel.appendChild(sec);
+        caseStatusContainer = list;
+      }
+    }
+  }
+
   // Helper: extract selected test names from the checklist
   function getSelectedTests() {
     const inputs = testList.querySelectorAll('input[type="checkbox"]');
@@ -67,16 +116,49 @@
 
   // Helper: append logs (keeps only last N lines for performance)
   function renderLogs(entries, maxLines) {
-    // entries are [{timestamp, level, message}]
-    // keep only tail based on maxLines
     const tail = entries.slice(-maxLines);
     const lines = tail.map(
       (e) =>
         `${new Date(e.timestamp * 1000).toLocaleTimeString()} [${e.level}] ${e.message}`
     );
     logOutput.textContent = lines.join("\n");
-    // Auto scroll to bottom
     logOutput.scrollTop = logOutput.scrollHeight;
+  }
+
+  // Render per-case statuses
+  function renderCaseStatuses(items) {
+    ensureDynamicSections();
+    if (!caseStatusContainer) return;
+    caseStatusContainer.innerHTML = "";
+    items.forEach((it) => {
+      const li = document.createElement("li");
+      const badge = document.createElement("span");
+      badge.className = "badge " + badgeClassForStatus(it.status);
+      badge.textContent = it.status;
+      const name = document.createElement("span");
+      name.style.marginLeft = "8px";
+      name.textContent = it.name;
+      li.appendChild(badge);
+      li.appendChild(name);
+      caseStatusContainer.appendChild(li);
+    });
+  }
+
+  function badgeClassForStatus(status) {
+    switch ((status || "").toUpperCase()) {
+      case "TESTING":
+        return "badge-info";
+      case "PASS":
+        return "badge-success";
+      case "FAIL":
+        return "badge-danger";
+      case "SKIP":
+        return "badge-warning";
+      case "SCHEDULE":
+      case "NOTRUN":
+      default:
+        return "badge-neutral";
+    }
   }
 
   // Start polling the backend using sessionId
@@ -84,13 +166,19 @@
     if (!sessionId || isPolling) return;
     isPolling = true;
 
-    // Poll cadence explanation:
-    // - Every second we request progress, stats, and logs
-    // - Progress updates the progress bar percent
-    // - Stats updates pass/fail/skip and started/finished times for elapsed
-    // - Logs tail is displayed (up to the configured limit)
     pollTimer = setInterval(async () => {
       try {
+        // UI lock - control buttons while run is active
+        if (sessionId) {
+          const lockRes = await fetch(`/ui_lock?session_id=${encodeURIComponent(sessionId)}`);
+          if (lockRes.ok) {
+            const lock = await lockRes.json();
+            const locked = !!lock.locked;
+            btnStart.disabled = locked;
+            btnStop.disabled = !locked;
+          }
+        }
+
         // Progress
         if (sessionId) {
           const progRes = await fetch(`/progress?session_id=${encodeURIComponent(sessionId)}`);
@@ -105,7 +193,6 @@
           const statsRes = await fetch(`/stats?session_id=${encodeURIComponent(sessionId)}`);
           if (statsRes.ok) {
             const stats = await statsRes.json();
-            // Update PASS/FAIL/SKIP; NOTRUN is derived from steps vs passed+failed+skipped
             const passed = stats.passed || 0;
             const failed = stats.failed || 0;
             const skipped = stats.skipped || 0;
@@ -117,14 +204,40 @@
             statSkip.textContent = skipped;
             statNotRun.textContent = notrun;
 
-            // status badge
-            setStatusBadge(stats.status || "RUNNING", stats.success === true ? "badge-success" : (stats.status === "FAILED" ? "badge-danger" : "badge-info"));
+            setStatusBadge(
+              stats.status || "RUNNING",
+              stats.success === true ? "badge-success" : (stats.status === "FAILED" ? "badge-danger" : "badge-info")
+            );
 
-            // elapsed time uses started_at if available, else falls back to now
             if (stats.started_at) startedAt = stats.started_at;
             const base = startedAt ? startedAt : Date.now() / 1000;
             const now = Date.now() / 1000;
             elapsedTimeEl.textContent = `Elapsed: ${formatElapsed(Math.max(0, now - base))}`;
+          }
+        }
+
+        // Case statuses
+        if (sessionId) {
+          const csRes = await fetch(`/case_status?session_id=${encodeURIComponent(sessionId)}`);
+          if (csRes.ok) {
+            const cs = await csRes.json();
+            renderCaseStatuses(cs.cases || []);
+          }
+        }
+
+        // Current case info
+        if (sessionId) {
+          const curRes = await fetch(`/current_case_info?session_id=${encodeURIComponent(sessionId)}`);
+          if (curRes.ok) {
+            const cur = await curRes.json();
+            ensureDynamicSections();
+            if (currentCaseNameEl) {
+              currentCaseNameEl.textContent = cur.name ? `Running: ${cur.name}` : "Idle";
+              currentCaseNameEl.className = "badge " + (cur.name ? "badge-info" : "badge-neutral");
+            }
+            if (currentCaseDocEl) {
+              currentCaseDocEl.textContent = cur.documentation || "";
+            }
           }
         }
 
@@ -134,7 +247,7 @@
           const logsRes = await fetch(`/logs?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`);
           if (logsRes.ok) {
             const logs = await logsRes.json();
-            renderLogs(logs, Math.min(500, limit)); // cap to ~500 lines
+            renderLogs(logs, Math.min(500, limit));
             lastRenderedLogCount = logs.length;
           }
         }
@@ -156,7 +269,6 @@
   btnStart.addEventListener("click", async () => {
     try {
       const selected = getSelectedTests();
-      // Prepare payload; test_name and folders are configurable at the top
       const payload = {
         suite: DEFAULT_SUITE,
         tests_root: DEFAULT_TESTS_ROOT,
@@ -190,6 +302,7 @@
       sessionId = data.session_id;
       startedAt = data.created_at || null;
       setStatusBadge("RUNNING", "badge-info");
+      ensureDynamicSections();
       startPolling();
     } catch (e) {
       console.error(e);

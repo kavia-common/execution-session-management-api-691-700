@@ -8,7 +8,7 @@ import subprocess
 import yaml
 from typing import Dict, List, Optional, Iterable
 
-from app.state_manager import StateManager
+from app.state_manager import StateManager, CASE_PASS, CASE_FAIL, CASE_SKIP
 
 
 def _load_robot_settings(config_folder: Optional[str]) -> Dict:
@@ -18,7 +18,6 @@ def _load_robot_settings(config_folder: Optional[str]) -> Dict:
     """
     if not config_folder:
         return {}
-    # Search for Robot_Setting.yaml in config_folder and optionally at root of project
     candidates = [
         os.path.join(config_folder, "Robot_Setting.yaml"),
         os.path.join(config_folder, "Robot_Setting.yml"),
@@ -60,14 +59,8 @@ def _build_robot_command(
 ) -> List[str]:
     """
     Build the Robot Framework CLI command.
-    - tests_root: directory or file path for robot suites.
-    - test_name: optional suite or file to run.
-    - test_cases: optional list of individual test cases.
-    - output_dir: output directory for reports/logs.
-    - robot_vars: dict of variables to pass via --variable key:value
     """
     cmd: List[str] = [sys.executable, "-m", "robot"]
-    # Outputs
     cmd += [
         "--outputdir", output_dir,
         "--report", "report.html",
@@ -75,24 +68,16 @@ def _build_robot_command(
         "--xunit", "xunit.xml",
         "--output", "output.xml",
     ]
-    # Variables
     for k, v in (robot_vars or {}).items():
-        # Robot supports key:value, ensure colon present without spaces
         cmd += ["--variable", f"{k}:{v}"]
-
-    # Test case selection
     if test_cases:
         for tc in test_cases:
             if tc:
                 cmd += ["--test", tc]
-
-    # Target path
-    # If test_name is given, join with tests_root; otherwise run tests_root
     target = tests_root
     if test_name:
         candidate = os.path.join(tests_root, test_name)
         target = candidate
-
     cmd.append(target)
     return cmd
 
@@ -136,14 +121,9 @@ class RobotRunner:
     ) -> None:
         """
         Start a Robot run asynchronously in a background thread.
-        - session_id: ID managed by StateManager
-        - project: project name for output folder grouping
-        - tests_root: path to robots (directory or file)
-        - test_name: optional suite/file
-        - test_cases: optional individual test case names
-        - config_folder: folder that may contain Robot_Setting.yaml
-        - extra_args: reserved for future use
         """
+        # Lock UI while running
+        self.state.set_ui_lock(session_id, True)
         self.state.mark_started(session_id)
         out_dir = _ensure_output_dir(project)
         self.state.set_artifacts(session_id, {
@@ -173,7 +153,6 @@ class RobotRunner:
         )
         t.start()
 
-    # Placeholder for future stop capability
     # PUBLIC_INTERFACE
     def request_stop(self, session_id: str) -> None:
         """
@@ -208,7 +187,8 @@ class RobotRunner:
         self.state.set_status(session_id, "RUNNING")
         self.state.append_log(session_id, "INFO", "Robot process started.")
 
-        # We don't know total steps up front; we estimate by counting test starts (simple heuristic)
+        current_case_name: Optional[str] = None
+
         for line in _iter_stream(proc.stdout):
             line_str = line.strip()
             if not line_str:
@@ -217,33 +197,60 @@ class RobotRunner:
             # Stream to logs
             self.state.append_log(session_id, "INFO", line_str)
 
-            # Heuristics: detect when a test starts/ends for progress counting
-            # Robot console usually includes patterns like:
-            # - Starting test: <name>
-            # - PASS | FAIL | SKIP or '... | PASS |'
             lowered = line_str.lower()
 
-            # Detect a new test starting (very naive)
+            # Detect a new test starting (heuristic)
+            # Match patterns like "Starting test: <name>" or "Start test ... <name>"
             if "starting test" in lowered or line_str.startswith("START /") or line_str.startswith("Start test"):
+                # naive extraction of name after colon if present
+                name = None
+                if ":" in line_str:
+                    parts = line_str.split(":", 1)
+                    name = parts[1].strip() or None
+                else:
+                    # fallback: last token after space
+                    toks = line_str.split()
+                    if toks:
+                        name = toks[-1]
+
+                current_case_name = name
                 total_steps += 1
+                # set current case as testing
+                self.state.set_current_case(session_id, current_case_name, documentation=None)
+                # progress update
                 self.state.set_progress(
                     session_id,
                     current_step=current_step,
                     total_steps=max(total_steps, 1),
                 )
+                continue
 
-            # Detect results
-            if "pass" in lowered:
+            # Detect results and map to current case if available
+            result_detected = None
+            if " | pass" in lowered or lowered.endswith("pass") or lowered.startswith("pass") or " pass " in lowered:
+                result_detected = CASE_PASS
                 totals["passed"] += 1
-                current_step = min(current_step + 1, max(total_steps, current_step + 1))
-            elif "fail" in lowered:
+            elif " | fail" in lowered or lowered.endswith("fail") or lowered.startswith("fail") or " fail " in lowered:
+                result_detected = CASE_FAIL
                 totals["failed"] += 1
-                current_step = min(current_step + 1, max(total_steps, current_step + 1))
-            elif "skip" in lowered:
+            elif " | skip" in lowered or lowered.endswith("skip") or lowered.startswith("skip") or " skip " in lowered:
+                result_detected = CASE_SKIP
                 totals["skipped"] += 1
-                current_step = min(current_step + 1, max(total_steps, current_step + 1))
 
-            # Update progress
+            if result_detected and current_case_name:
+                self.state.set_case_result(session_id, current_case_name, result_detected)
+                current_step = min(current_step + 1, max(total_steps, current_step + 1))
+                # Update progress after result
+                self.state.set_progress(
+                    session_id,
+                    current_step=current_step,
+                    total_steps=max(total_steps, current_step if total_steps == 0 else total_steps),
+                )
+                # reset current until next start
+                current_case_name = None
+                continue
+
+            # Otherwise, periodically ensure progress doesn't regress
             self.state.set_progress(
                 session_id,
                 current_step=current_step,

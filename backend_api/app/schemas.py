@@ -13,9 +13,7 @@ class ErrorSchema(Schema):
 
 class RunRequestSchema(Schema):
     """Request payload for starting a run."""
-    # Backward compatible 'suite' but we also support Robot-specific params
     suite = fields.Str(required=False, load_default="default", description="Project/suite name used for grouping outputs")
-    # Robot integration fields:
     test_name = fields.Str(required=False, allow_none=True, description="Optional suite/file path relative to tests_root")
     test_cases = fields.List(fields.Str(), required=False, load_default=list, description="Optional list of Robot test case names to run")
     tests_root = fields.Str(required=False, load_default=".", description="Directory or file path where robot tests reside")
@@ -54,7 +52,6 @@ class StatsSchema(Schema):
     steps_completed = fields.Int(required=True, description="Number of steps completed")
     success = fields.Bool(required=True, description="Whether the session completed successfully")
     artifacts = fields.Dict(keys=fields.Str(), values=fields.Str(), required=True, description="Artifact map such as URLs")
-    # Additional Robot totals for convenience
     passed = fields.Int(required=False, description="Number of tests passed")
     failed = fields.Int(required=False, description="Number of tests failed")
     skipped = fields.Int(required=False, description="Number of tests skipped")
@@ -75,3 +72,35 @@ class LogEntrySchema(Schema):
     timestamp = fields.Float(required=True, description="Epoch seconds")
     level = fields.Str(required=True, description="Log level")
     message = fields.Str(required=True, description="Log message")
+
+
+# New query/response schemas for Phase 4
+
+class SessionQuerySchema(Schema):
+    """Query schema requiring session_id."""
+    session_id = fields.Str(required=True, metadata={"description": "Session identifier"})
+
+
+class CaseStatusItemSchema(Schema):
+    """Single case status item."""
+    name = fields.Str(required=True, description="Test case name")
+    status = fields.Str(required=True, description="Status of the case (NOTRUN, SCHEDULE, TESTING, PASS, FAIL, SKIP)")
+
+
+class CaseStatusResponseSchema(Schema):
+    """Per-case statuses response."""
+    session_id = fields.Str(required=True, description="Session identifier")
+    cases = fields.List(fields.Nested(CaseStatusItemSchema), required=True, description="List of case statuses")
+
+
+class CurrentCaseInfoResponseSchema(Schema):
+    """Current running case information."""
+    session_id = fields.Str(required=True, description="Session identifier")
+    name = fields.Str(required=False, allow_none=True, description="Current test case name")
+    documentation = fields.Str(required=False, allow_none=True, description="Current test documentation if available")
+
+
+class UILockResponseSchema(Schema):
+    """UI lock response."""
+    session_id = fields.Str(required=True, description="Session identifier")
+    locked = fields.Bool(required=True, description="Whether UI controls should be locked")
